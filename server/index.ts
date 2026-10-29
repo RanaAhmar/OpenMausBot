@@ -11950,7 +11950,7 @@ function configStatus() {
       mode: localVmMode(cfg),
       maxInstances: localVmMaxInstances(cfg),
       idleTimeoutMinutes: localVmIdleTimeoutMinutes(cfg),
-      preserveInstalledApps: localVmPreservesInstalledApps(cfg),
+      ...(localVmPreservesInstalledApps(cfg) ? { preserveInstalledApps: true } : {}),
     },
     features: {
       skillAuthoring: skillAuthoringEnabled(cfg),
