@@ -719,16 +719,15 @@ function dockerWorkspaceMountIsSafe(
   expectedWorkspace: string,
   runtime: Runtime = "docker",
 ): boolean {
-  const sourceMatches = sameWorkspaceSource(mounts?.[0]?.Source, platform, expectedWorkspace) ||
+  const workspace = mounts?.find((mount) => mount.Type === "bind" && mount.Destination === VM_WORKSPACE_GUEST && mount.RW !== false);
+  const sourceMatches = sameWorkspaceSource(workspace?.Source, platform, expectedWorkspace) ||
     (runtime === "podman" &&
       platform === "win32" &&
-      samePodmanWindowsWorkspaceSource(mounts?.[0]?.Source, expectedWorkspace));
+      samePodmanWindowsWorkspaceSource(workspace?.Source, expectedWorkspace));
   return Boolean(
-    mounts?.length === 1 &&
-      mounts[0]?.Type === "bind" &&
+    workspace &&
       sourceMatches &&
-      mounts[0]?.Destination === VM_WORKSPACE_GUEST &&
-      mounts[0]?.RW !== false,
+      mounts?.every((mount) => mount === workspace || (mount.Type === "bind" && mount.RW === false)),
   );
 }
 
