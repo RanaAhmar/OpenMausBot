@@ -39,6 +39,7 @@ import {
   type CommandRunner,
   type LocalVmTarget,
   autoLocalVmAttachable,
+  assertPersistentAddonSources,
 } from "./container-computer.ts";
 import { PIDS_LIMIT } from "./container-limits.ts";
 import { DATA_DIR } from "./config.ts";
@@ -70,6 +71,23 @@ it("recognizes only a durable VM workspace directory as prior provisioning evide
     const link = join(root, "linked-workspace");
     symlinkSync(target.workspaceDir, link, "junction");
     expect(localVmWorkspaceExists({ ...target, workspaceDir: link })).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects a persistent add-on source that escapes through a symlink", () => {
+  const root = mkdtempSync(join(tmpdir(), "omb-vm-addons-"));
+  try {
+    const addon = join(root, "browseros-neo");
+    mkdirSync(addon);
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(addon, "runtime"));
+    expect(() => assertPersistentAddonSources([{
+      name: "browseros-neo",
+      mounts: [{ source: "runtime", guestPath: "/opt/browseros-neo-runtime" }],
+    }], root)).toThrow("symbolic link");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -537,6 +555,34 @@ describe("containerComputerStatus", () => {
     expect(fake.calls).not.toContain("container info --format {{.ServerVersion}}");
   });
 
+  it("accepts the configured read-only add-on mounts on Apple container", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": new Error("missing"),
+      "/usr/bin/which podman": new Error("missing"),
+      "/usr/bin/which container": "container\n",
+      "container system status": "running\n",
+      [`container image inspect ${IMAGE}`]: appleImageInspect([appleImageVariant(preparedLabels)]),
+      [`container inspect ${CONTAINER}`]: JSON.stringify([{
+        configuration: {
+          image: { reference: IMAGE, descriptor: { digest: "sha256:managed-image-id" } },
+          resources: { cpus: 2, memoryInBytes: 4 * 1024 * 1024 * 1024 },
+          publishedPorts: [{ hostAddress: "127.0.0.1", containerPort: 6901 }],
+          labels: { ...preparedLabels, [WORKSPACE_LABEL]: "1" },
+          mounts: [
+            { source: VM_WORKSPACE_DIR, destination: VM_WORKSPACE_GUEST, options: [] },
+            { source: `${DATA_DIR}/vm-addons/browseros-neo/runtime`, destination: "/opt/browseros-neo-runtime", options: ["ro"] },
+          ],
+        },
+        status: { state: "running" },
+      }]),
+    });
+
+    expect((await containerComputerStatus(fake.run, "darwin", undefined, {
+      persistentAddons: [{ name: "browseros-neo", mounts: [{ source: "runtime", guestPath: "/opt/browseros-neo-runtime" }] }],
+      probeDesktop: false,
+    })).persistence).toBe("durable");
+  });
+
   it("does not report a running container as ready when its viewer is public", async () => {
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
@@ -671,7 +717,32 @@ describe("containerComputerStatus", () => {
       [readinessRead]: validPng.toString("base64"),
     });
 
-    expect((await containerComputerStatus(fake.run, "linux")).persistence).toBe("durable");
+    expect((await containerComputerStatus(fake.run, "linux", undefined, {
+      persistentAddons: [{
+        name: "browseros-neo",
+        mounts: [
+          { source: "browserclaw", guestPath: "/usr/lib/browserclaw" },
+          { source: "runtime", guestPath: "/opt/browseros-neo-runtime" },
+        ],
+      }],
+    })).persistence).toBe("durable");
+  });
+
+  it("rejects an unconfigured read-only Local VM mount", async () => {
+    const detail = JSON.parse(readyInspect())[0];
+    detail.Mounts.push({ Type: "bind", Source: "/host/private", Destination: "/opt/private", RW: false });
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: JSON.stringify([detail]),
+    });
+
+    expect((await containerComputerStatus(fake.run, "linux", undefined, {
+      persistentAddons: [],
+      probeDesktop: false,
+    })).persistence).toBe("unsafe");
   });
 
   it("can inspect the viewer without waiting for CUA health or screenshots", async () => {
@@ -1125,6 +1196,14 @@ describe("setupCommands", () => {
 
     expect(args).toContain(`type=bind,source=${DATA_DIR}/vm-addons/browseros-neo/browserclaw,target=/usr/lib/browserclaw,readonly,relabel=private`);
     expect(args).toContain(`type=bind,source=${DATA_DIR}/vm-addons/browseros-neo/runtime,target=/opt/browseros-neo-runtime,readonly,relabel=private`);
+  });
+
+  it("includes persistent add-ons in the displayed setup command", () => {
+    const command = setupCommands("podman", "linux", SHARED_LOCAL_VM_TARGET, [{
+      name: "browseros-neo",
+      mounts: [{ source: "runtime", guestPath: "/opt/browseros-neo-runtime" }],
+    }]).run!;
+    expect(command).toContain(`source=${DATA_DIR}/vm-addons/browseros-neo/runtime,target=/opt/browseros-neo-runtime,readonly,relabel=private`);
   });
 
   it("keeps per-bot Podman workspaces separate without recursively changing their owner", () => {

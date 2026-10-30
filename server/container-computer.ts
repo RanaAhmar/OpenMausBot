@@ -1,10 +1,10 @@
 // Cua-backed Local VM: OMB owns only the sandbox boundary; desktop automation is Cua Driver's (`cua-driver mcp` in the container).
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { augmentedPath, resolveCliSpawn } from "./env-path.ts";
@@ -64,6 +64,43 @@ export interface LocalVmTarget {
 export interface PersistentLocalVmAddon {
   name: string;
   mounts: ReadonlyArray<{ source: string; guestPath: string }>;
+}
+
+/** Converts trusted add-on identifiers into the server-owned host bind paths. */
+function persistentAddonMounts(addons: ReadonlyArray<PersistentLocalVmAddon>) {
+  return addons.flatMap((addon) => addon.mounts.map((mount) => ({
+    source: join(DATA_DIR, "vm-addons", addon.name, mount.source),
+    guestPath: mount.guestPath,
+  })));
+}
+
+/** Returns whether a resolved path is strictly below its allowed root. */
+function isWithin(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+/** Reject host aliases before the container runtime receives a bind source from persistent add-on configuration. */
+export function assertPersistentAddonSources(
+  addons: ReadonlyArray<PersistentLocalVmAddon>,
+  addonsDir = join(DATA_DIR, "vm-addons"),
+): void {
+  if (addons.length === 0) return;
+  const realAddonsDir = realpathSync(addonsDir);
+  for (const addon of addons) {
+    const addonDir = join(addonsDir, addon.name);
+    const realAddonDir = realpathSync(addonDir);
+    if (!isWithin(realAddonsDir, realAddonDir)) throw new Error(`Persistent add-on ${addon.name} is outside the add-on directory`);
+    for (const mount of addon.mounts) {
+      const source = resolve(addonDir, mount.source);
+      if (!isWithin(addonDir, source)) throw new Error(`Persistent add-on ${addon.name} source escapes its directory`);
+      const entry = lstatSync(source);
+      if (entry.isSymbolicLink()) throw new Error(`Persistent add-on ${addon.name} source cannot be a symbolic link`);
+      const realSource = realpathSync(source);
+      if (!isWithin(realAddonDir, realSource)) throw new Error(`Persistent add-on ${addon.name} source is outside its directory`);
+      if (entry.isFile() && entry.nlink > 1) throw new Error(`Persistent add-on ${addon.name} source cannot be a hard-linked file`);
+    }
+  }
 }
 
 export const SHARED_LOCAL_VM_TARGET: LocalVmTarget = {
@@ -473,7 +510,7 @@ export async function containerComputerStatus(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
-  options: { probeDesktop?: boolean } = {},
+  options: { probeDesktop?: boolean; persistentAddons?: ReadonlyArray<PersistentLocalVmAddon> } = {},
 ): Promise<ContainerComputerStatus> {
   const status = emptyStatus(platform, target);
   const runtimeStatus = await containerRuntimeStatus(runner, platform);
@@ -523,7 +560,7 @@ export async function containerComputerStatus(
       status.imageMatches =
         appleImage === IMAGE && status.image_id !== null && appleImageId === status.image_id;
       status.managed = containerOwnershipLabelsMatch(detail?.configuration?.labels, target);
-      status.persistence = appleWorkspaceMountIsSafe(detail?.configuration?.mounts, platform, target.workspaceDir)
+      status.persistence = appleWorkspaceMountIsSafe(detail?.configuration?.mounts, platform, target.workspaceDir, options.persistentAddons)
         ? "durable"
         : "unsafe";
       const resources = detail?.configuration?.resources;
@@ -567,6 +604,7 @@ export async function containerComputerStatus(
         platform,
         target.workspaceDir,
         status.runtime,
+        options.persistentAddons,
       ) ? "durable" : "unsafe";
       status.security = (
         status.runtime === "podman"
@@ -711,6 +749,13 @@ function samePodmanWindowsWorkspaceSource(source: string | undefined, expectedWo
   return actual.toLowerCase() === expected.toLowerCase();
 }
 
+/** Matches a bind source, including Podman Machine's Windows-to-WSL translation. */
+function sameMountSource(source: string | undefined, expected: string, platform: NodeJS.Platform, runtime: Runtime): boolean {
+  return sameWorkspaceSource(source, platform, expected) ||
+    (runtime === "podman" && platform === "win32" && samePodmanWindowsWorkspaceSource(source, expected));
+}
+
+/** Requires the writable workspace plus exactly the configured read-only add-on binds. */
 function dockerWorkspaceMountIsSafe(
   mounts:
     | Array<{ Type?: string; Source?: string; Destination?: string; RW?: boolean }>
@@ -718,30 +763,39 @@ function dockerWorkspaceMountIsSafe(
   platform: NodeJS.Platform,
   expectedWorkspace: string,
   runtime: Runtime = "docker",
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): boolean {
   const workspace = mounts?.find((mount) => mount.Type === "bind" && mount.Destination === VM_WORKSPACE_GUEST && mount.RW !== false);
-  const sourceMatches = sameWorkspaceSource(workspace?.Source, platform, expectedWorkspace) ||
-    (runtime === "podman" &&
-      platform === "win32" &&
-      samePodmanWindowsWorkspaceSource(workspace?.Source, expectedWorkspace));
+  const addons = persistentAddonMounts(persistentAddons);
   return Boolean(
     workspace &&
-      sourceMatches &&
-      mounts?.every((mount) => mount === workspace || (mount.Type === "bind" && mount.RW === false)),
+      sameMountSource(workspace.Source, expectedWorkspace, platform, runtime) &&
+      mounts?.length === addons.length + 1 &&
+      addons.every((addon) => mounts.some((mount) =>
+        mount.Type === "bind" && mount.RW === false && mount.Destination === addon.guestPath &&
+        sameMountSource(mount.Source, addon.source, platform, runtime),
+      )),
   );
 }
 
+/** Requires the writable workspace plus exactly the configured read-only add-on binds. */
 function appleWorkspaceMountIsSafe(
   mounts: Array<{ source?: string; destination?: string; options?: string[] }> | undefined,
   platform: NodeJS.Platform,
   expectedWorkspace: string,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): boolean {
-  const options = mounts?.[0]?.options ?? [];
+  const workspace = mounts?.find((mount) => mount.destination === VM_WORKSPACE_GUEST && !mount.options?.some((option) => option === "ro" || option === "readonly"));
+  const addons = persistentAddonMounts(persistentAddons);
   return Boolean(
-    mounts?.length === 1 &&
-      sameWorkspaceSource(mounts[0]?.source, platform, expectedWorkspace) &&
-      mounts[0]?.destination === VM_WORKSPACE_GUEST &&
-      !options.some((option) => option === "ro" || option === "readonly"),
+    workspace &&
+      mounts?.length === addons.length + 1 &&
+      sameWorkspaceSource(workspace.source, platform, expectedWorkspace) &&
+      addons.every((addon) => mounts.some((mount) =>
+        mount.destination === addon.guestPath &&
+        mount.options?.some((option) => option === "ro" || option === "readonly") &&
+        sameWorkspaceSource(mount.source, platform, addon.source),
+      )),
   );
 }
 
@@ -953,7 +1007,7 @@ export async function containerComputerAction(
   persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): Promise<ContainerComputerStatus> {
   if (runner === sh && platform === process.platform) screenshotStatusCache.delete(target.key);
-  const before = await containerComputerStatus(runner, platform, target);
+  const before = await containerComputerStatus(runner, platform, target, { persistentAddons });
   const runtime = before.runtime;
   if (!runtime) throw Object.assign(new Error(before.problem ?? "No container runtime is installed"), { status: 409 });
   if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? `${runtime} is not running`), { status: 409 });
@@ -986,7 +1040,10 @@ export async function containerComputerAction(
   if (action === "pull") {
     await prepareManagedImage(runtime, runner);
   } else {
-    if (action === "run") await ensureVmWorkspace(platform, target);
+    if (action === "run") {
+      assertPersistentAddonSources(persistentAddons);
+      await ensureVmWorkspace(platform, target);
+    }
     const args =
       action === "run"
         ? containerRunArgs(runtime, randomBytes(6).toString("base64url"), target, persistentAddons)
@@ -995,7 +1052,7 @@ export async function containerComputerAction(
           : [action, target.containerName];
     await runner(runtime, args, 2 * 60_000);
   }
-  return containerComputerStatus(runner, platform, target);
+  return containerComputerStatus(runner, platform, target, { persistentAddons });
 }
 
 export async function containerComputerExists(
@@ -1195,6 +1252,7 @@ export function setupCommands(
   runtime: Runtime | null,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ) {
   const install =
     platform === "darwin"
@@ -1233,7 +1291,7 @@ export function setupCommands(
     run:
       runtime === "container" && target.key !== SHARED_LOCAL_VM_TARGET.key
         ? null
-        : command(containerRunArgs(runtime, "CHANGE_ME", target)),
+        : command(containerRunArgs(runtime, "CHANGE_ME", target, persistentAddons)),
     start: command(["start", target.containerName]),
     stop: command(["stop", target.containerName]),
     remove: command(["rm", runtime === "container" ? "--force" : "-f", target.containerName]),

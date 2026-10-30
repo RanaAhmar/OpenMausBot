@@ -583,6 +583,7 @@ describe("configuration boundaries", () => {
     expect(parseConfigPatch({ localVm: { persistentAddons: addons } })).toEqual({ localVm: { persistentAddons: addons } });
     expect(localVmPersistentAddons({ localVm: { persistentAddons: addons } })).toEqual(addons);
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "../host", guestPath: "/opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
+    expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "..\\host", guestPath: "/opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime", guestPath: "../opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
   });
 

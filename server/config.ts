@@ -87,8 +87,8 @@ const mcpConfigSchema = z.object({
 }).strict();
 const localVmAddonNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "must be a lowercase add-on name");
 const localVmAddonSourceSchema = z.string().refine(
-  (value) => value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
-  { message: "must be a non-empty relative path without dot segments" },
+  (value) => !value.includes("\\") && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
+  { message: "must be a non-empty slash-delimited relative path without dot segments" },
 );
 const localVmAddonGuestPathSchema = z.string().refine(
   (value) => value.startsWith("/") && value.split("/").slice(1).every((part) => part !== "" && part !== "." && part !== ".."),

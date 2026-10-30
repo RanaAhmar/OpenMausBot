@@ -320,7 +320,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
         if (action === "stop" || action === "remove") localVmIdleFor(SHARED_LOCAL_VM_TARGET).cancel();
         return json(res, 200, {
           ...localVmViewerStatus(status, auth),
-          commands: setupCommands(status.runtime, process.platform, SHARED_LOCAL_VM_TARGET),
+          commands: setupCommands(status.runtime, process.platform, SHARED_LOCAL_VM_TARGET, localVmPersistentAddons(cfg)),
           idle_timeout_ms: localVmIdleMs(),
           mode: localVmMode(cfg),
           max_instances: localVmMaxInstances(cfg),
@@ -375,7 +375,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
       if (action === "run") localVmProvisionBusy.set(true);
       try {
         if (action === "run") {
-          const before = await containerComputerStatus(undefined, undefined, target);
+          const before = await containerComputerStatus(undefined, undefined, target, { persistentAddons: localVmPersistentAddons(cfg) });
           if (!before.runtime) return json(res, 409, { error: before.problem ?? "No container runtime is installed" });
           if (!(await containerComputerExists(before.runtime, target))) {
             const count = await existingPerBotLocalVmCount(before.runtime);
@@ -395,7 +395,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
         if (action === "stop" || action === "remove") localVmIdleFor(target).cancel();
         return json(res, 200, {
           ...localVmViewerStatus(status, auth),
-          commands: setupCommands(status.runtime, process.platform, target),
+          commands: setupCommands(status.runtime, process.platform, target, localVmPersistentAddons(cfg)),
           idle_timeout_ms: localVmIdleMs(),
           mode: localVmMode(cfg),
           max_instances: localVmMaxInstances(cfg),
@@ -442,7 +442,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
         return json(res, 409, { error: "Take control of this computer first" });
       }
       const target = localVmTargetForStatus(bot.id, threadId);
-      const status = await containerComputerStatus(undefined, undefined, target);
+      const status = await containerComputerStatus(undefined, undefined, target, { persistentAddons: localVmPersistentAddons(cfg) });
       if (!status.ready || !status.managed || status.container !== "running" || status.network !== "loopback"
         || !status.viewer_url) {
         return json(res, 409, { error: status.problem ?? "The Local VM is not ready" });
