@@ -153,6 +153,7 @@ import {
   localVmIdleTimeoutMinutes,
   localVmMaxInstances,
   localVmMode,
+  localVmPersistentAddons,
   localVmPreservesInstalledApps,
   roomTurnTimeoutMinutes,
   mcpCallTimeoutMinutes,
@@ -5701,7 +5702,7 @@ let localVmProvisionBusy = false;
 let localVmModeChangeBusy = false;
 const localVmUpdates = createLocalVmUpdater({
   status: (target) => containerComputerStatus(undefined, undefined, target),
-  act: (action, target) => containerComputerAction(action, undefined, undefined, target),
+  act: (action, target) => containerComputerAction(action, undefined, undefined, target, localVmPersistentAddons(cfg)),
   imageBusy: { get: () => localVmImageBusy, set: (busy) => { localVmImageBusy = busy; } },
   provisionBusy: { get: () => localVmProvisionBusy, set: (busy) => { localVmProvisionBusy = busy; } },
   lifecycleBusy: localVmLifecycleBusy,
@@ -6329,7 +6330,7 @@ function localVmIdleFor(target: LocalVmTarget): ComputerIdleTimer {
       try {
         const status = await containerComputerStatus(undefined, undefined, target);
         if (status.container === "running" && status.managed) {
-          const stopped = await containerComputerAction("stop", undefined, undefined, target);
+          const stopped = await containerComputerAction("stop", undefined, undefined, target, localVmPersistentAddons(cfg));
           recordLocalVmIdleStop(target.key, stopped.stopped_at);
         }
       } finally {
@@ -9241,7 +9242,7 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           }
           if (localVmCleanup) {
             if (localVmCleanup.removeContainer) {
-              await containerComputerAction("remove", undefined, undefined, localVmCleanup.target);
+              await containerComputerAction("remove", undefined, undefined, localVmCleanup.target, localVmPersistentAddons(cfg));
             }
             await removeDirectory(localVmCleanup.target.workspaceDir, { recursive: true, force: true });
             localVmSeen.delete(localVmCleanup.target.key);
@@ -11858,7 +11859,7 @@ async function readyLocalVmForTurn(botId: string, target: LocalVmTarget, isCurre
 
     broadcast({ kind: "computer", botId, state: "provisioning" });
     try {
-      status = await containerComputerAction(action, undefined, undefined, target);
+      status = await containerComputerAction(action, undefined, undefined, target, localVmPersistentAddons(cfg));
     } catch {
       // `run` can throw after the container exists, so arm the idle backstop anyway.
       localVmIdleFor(target).touch();

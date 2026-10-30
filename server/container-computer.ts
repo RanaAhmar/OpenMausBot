@@ -61,6 +61,11 @@ export interface LocalVmTarget {
   label: string;
 }
 
+export interface PersistentLocalVmAddon {
+  name: string;
+  mounts: ReadonlyArray<{ source: string; guestPath: string }>;
+}
+
 export const SHARED_LOCAL_VM_TARGET: LocalVmTarget = {
   key: "shared",
   containerName: CONTAINER,
@@ -826,6 +831,7 @@ export function containerRunArgs(
   runtime: Runtime,
   password = "CHANGE_ME",
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): string[] {
   if (runtime === "container" && target.key !== SHARED_LOCAL_VM_TARGET.key) {
     throw new Error("Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port");
@@ -893,6 +899,17 @@ export function containerRunArgs(
   }
   // Podman's default seccomp profile gates chroot on this capability, and Firefox chroots to build its sandbox.
   if (runtime === "podman") common.push("--cap-add", "SYS_CHROOT");
+  for (const addon of persistentAddons) {
+    for (const mount of addon.mounts) {
+      const source = join(DATA_DIR, "vm-addons", addon.name, mount.source);
+      common.push(
+        "--mount",
+        runtime === "podman"
+          ? `type=bind,source=${source},target=${mount.guestPath},readonly,relabel=private`
+          : `type=bind,source=${source},target=${mount.guestPath},readonly`,
+      );
+    }
+  }
   common.push(
     "--mount",
     runtime === "podman"
@@ -934,6 +951,7 @@ export async function containerComputerAction(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): Promise<ContainerComputerStatus> {
   if (runner === sh && platform === process.platform) screenshotStatusCache.delete(target.key);
   const before = await containerComputerStatus(runner, platform, target);
@@ -972,7 +990,7 @@ export async function containerComputerAction(
     if (action === "run") await ensureVmWorkspace(platform, target);
     const args =
       action === "run"
-        ? containerRunArgs(runtime, randomBytes(6).toString("base64url"), target)
+        ? containerRunArgs(runtime, randomBytes(6).toString("base64url"), target, persistentAddons)
         : action === "remove"
           ? ["rm", runtime === "container" ? "--force" : "-f", target.containerName]
           : [action, target.containerName];

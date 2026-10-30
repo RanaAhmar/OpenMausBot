@@ -41,6 +41,7 @@ import {
   autoLocalVmAttachable,
 } from "./container-computer.ts";
 import { PIDS_LIMIT } from "./container-limits.ts";
+import { DATA_DIR } from "./config.ts";
 
 function runner(responses: Record<string, string | Error>) {
   const calls: string[] = [];
@@ -1089,6 +1090,19 @@ describe("setupCommands", () => {
     );
     expect(command).toContain("--userns keep-id:uid=1000,gid=1000 --user 0:0");
     expect(command).not.toContain("U=true");
+  });
+
+  it("mounts only named server add-ons read-only", () => {
+    const args = containerRunArgs("podman", "secret", SHARED_LOCAL_VM_TARGET, [{
+      name: "browseros-neo",
+      mounts: [
+        { source: "browserclaw", guestPath: "/usr/lib/browserclaw" },
+        { source: "runtime", guestPath: "/opt/browseros-neo-runtime" },
+      ],
+    }]);
+
+    expect(args).toContain(`type=bind,source=${DATA_DIR}/vm-addons/browseros-neo/browserclaw,target=/usr/lib/browserclaw,readonly,relabel=private`);
+    expect(args).toContain(`type=bind,source=${DATA_DIR}/vm-addons/browseros-neo/runtime,target=/opt/browseros-neo-runtime,readonly,relabel=private`);
   });
 
   it("keeps per-bot Podman workspaces separate without recursively changing their owner", () => {
