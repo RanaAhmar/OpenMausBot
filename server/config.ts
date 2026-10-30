@@ -87,12 +87,12 @@ const mcpConfigSchema = z.object({
 }).strict();
 const localVmAddonNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "must be a lowercase add-on name");
 const localVmAddonSourceSchema = z.string().refine(
-  (value) => !value.includes("\\") && !value.includes(",") && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
-  { message: "must be a non-empty slash-delimited relative path without dot segments or commas" },
+  (value) => !value.includes("\\") && !value.includes(",") && !value.includes("\r") && !value.includes("\n") && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
+  { message: "must be a non-empty slash-delimited relative path without dot segments, commas, or line breaks" },
 );
 const localVmAddonGuestPathSchema = z.string().refine(
-  (value) => value.startsWith("/") && !value.includes(",") && value.split("/").slice(1).every((part) => part !== "" && part !== "." && part !== ".."),
-  { message: "must be an absolute guest path without dot segments or commas" },
+  (value) => value.startsWith("/") && !value.includes(",") && !value.includes("\r") && !value.includes("\n") && value.split("/").slice(1).every((part) => part !== "" && part !== "." && part !== ".."),
+  { message: "must be an absolute guest path without dot segments, commas, or line breaks" },
 );
 const localVmPersistentAddonSchema = z.object({
   name: localVmAddonNameSchema,

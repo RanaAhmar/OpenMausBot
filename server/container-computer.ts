@@ -952,16 +952,13 @@ export function containerRunArgs(
   }
   // Podman's default seccomp profile gates chroot on this capability, and Firefox chroots to build its sandbox.
   if (runtime === "podman") common.push("--cap-add", "SYS_CHROOT");
-  for (const addon of persistentAddons) {
-    for (const mount of addon.mounts) {
-      const source = join(DATA_DIR, "vm-addons", addon.name, mount.source);
-      common.push(
-        "--mount",
-        runtime === "podman"
-          ? `type=bind,source=${source},target=${mount.guestPath},readonly,relabel=private`
-          : `type=bind,source=${source},target=${mount.guestPath},readonly`,
-      );
-    }
+  for (const mount of persistentAddonMounts(persistentAddons)) {
+    common.push(
+      "--mount",
+      runtime === "podman"
+        ? `type=bind,source=${mount.source},target=${mount.guestPath},readonly,relabel=private`
+        : `type=bind,source=${mount.source},target=${mount.guestPath},readonly`,
+    );
   }
   common.push(
     "--mount",

@@ -586,6 +586,8 @@ describe("configuration boundaries", () => {
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "..\\host", guestPath: "/opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime,readonly", guestPath: "/opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime", guestPath: "/opt/neo,readonly" }] }] } })).toThrow("localVm.persistentAddons");
+    expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime\nreadonly", guestPath: "/opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
+    expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime", guestPath: "/opt/neo\rreadonly" }] }] } })).toThrow("localVm.persistentAddons");
     expect(() => parseConfigPatch({ localVm: { persistentAddons: [{ name: "neo", mounts: [{ source: "runtime", guestPath: "../opt/neo" }] }] } })).toThrow("localVm.persistentAddons");
   });
 
