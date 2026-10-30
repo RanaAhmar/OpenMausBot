@@ -983,6 +983,39 @@ describe("Cua integration", () => {
     expect(fake.calls.some((call) => /xdotool|scrot|vnc/i.test(call))).toBe(false);
   });
 
+  it("accepts the configured read-only add-ons when checking screenshot readiness", async () => {
+    const detail = JSON.parse(readyInspect())[0];
+    detail.Mounts.push(
+      { Type: "bind", Source: `${DATA_DIR}/vm-addons/browseros-neo/browserclaw`, Destination: "/usr/lib/browserclaw", RW: false },
+      { Type: "bind", Source: `${DATA_DIR}/vm-addons/browseros-neo/runtime`, Destination: "/opt/browseros-neo-runtime", RW: false },
+    );
+    const screenshotCall =
+      `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
+      "--screenshot-out-file /tmp/openmausbot-preview.png";
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: JSON.stringify([detail]),
+      [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [statusProbe]: "running\n",
+      [healthProbe]: JSON.stringify({ schema_version: "1", overall: "ok", checks: [] }),
+      [readinessProbe]: "{}\n",
+      [readinessRead]: validPng.toString("base64"),
+      [screenshotCall]: "{}\n",
+      [`docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-preview.png`]: validPng.toString("base64"),
+    });
+
+    await expect(containerComputerScreenshot(fake.run, "linux", SHARED_LOCAL_VM_TARGET, [{
+      name: "browseros-neo",
+      mounts: [
+        { source: "browserclaw", guestPath: "/usr/lib/browserclaw" },
+        { source: "runtime", guestPath: "/opt/browseros-neo-runtime" },
+      ],
+    }])).resolves.toBe(`data:image/png;base64,${validPng.toString("base64")}`);
+  });
+
   // The live screen poller broadcasts this shape verbatim to every SSE
   // client, and the phone renders nothing but those events: a data URL here
   // would reach it as base64 that decodes to garbage.

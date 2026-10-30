@@ -338,7 +338,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
       localVmIdleFor(SHARED_LOCAL_VM_TARGET).touch();
       res.setHeader("cache-control", "private, no-store");
       return json(res, 200, {
-        image: await containerComputerScreenshot(undefined, undefined, SHARED_LOCAL_VM_TARGET),
+        image: await containerComputerScreenshot(undefined, undefined, SHARED_LOCAL_VM_TARGET, localVmPersistentAddons(cfg)),
       });
     }
 
@@ -420,7 +420,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
       localVmIdleFor(target).touch();
       res.setHeader("cache-control", "private, no-store");
       return json(res, 200, {
-        image: await containerComputerScreenshot(undefined, undefined, target),
+        image: await containerComputerScreenshot(undefined, undefined, target, localVmPersistentAddons(cfg)),
       });
     }
     // Granted only to the control lease holding this bot's computer, and only with admin scope. The loopback companion

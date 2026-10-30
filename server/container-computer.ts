@@ -1091,19 +1091,21 @@ export async function containerComputerFrame(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): Promise<{ png: string; format: "png" | "jpeg" }> {
   const cacheable = runner === sh && platform === process.platform;
+  const cacheKey = `${target.key}:${JSON.stringify(persistentAddons)}`;
   const now = Date.now();
-  const cached = screenshotStatusCache.get(target.key);
+  const cached = screenshotStatusCache.get(cacheKey);
   const status =
     cacheable && cached && cached.expiresAt > now
       ? cached.status
-      : await containerComputerStatus(runner, platform, target);
+      : await containerComputerStatus(runner, platform, target, { persistentAddons });
   if (!status.ready || !status.runtime) {
-    if (cacheable) screenshotStatusCache.delete(target.key);
+    if (cacheable) screenshotStatusCache.delete(cacheKey);
     throw Object.assign(new Error(status.problem ?? "The Local VM is not ready"), { status: 409 });
   }
-  if (cacheable) screenshotStatusCache.set(target.key, { status, expiresAt: now + SCREENSHOT_STATUS_TTL_MS });
+  if (cacheable) screenshotStatusCache.set(cacheKey, { status, expiresAt: now + SCREENSHOT_STATUS_TTL_MS });
   try {
     const screenshot = "/tmp/openmausbot-preview.png";
     await runner(
@@ -1131,7 +1133,7 @@ export async function containerComputerFrame(
     }
     return { png: data, format: checked.mime === "image/jpeg" ? "jpeg" : "png" };
   } catch (error) {
-    if (cacheable) screenshotStatusCache.delete(target.key);
+    if (cacheable) screenshotStatusCache.delete(cacheKey);
     throw error;
   }
 }
@@ -1140,8 +1142,9 @@ export async function containerComputerScreenshot(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon> = [],
 ): Promise<string> {
-  const { png, format } = await containerComputerFrame(runner, platform, target);
+  const { png, format } = await containerComputerFrame(runner, platform, target, persistentAddons);
   return `data:image/${format};base64,${png}`;
 }
 
