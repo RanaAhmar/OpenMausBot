@@ -10,6 +10,7 @@ import {
   SHARED_LOCAL_VM_TARGET,
   setupCommands,
   type LocalVmTarget,
+  type PersistentLocalVmAddon,
   type Runtime,
 } from "../container-computer.ts";
 import { viewerTargetId } from "../../shared/desktop-viewer.ts";
@@ -31,9 +32,12 @@ import { createComputerUsageRoutes } from "./computer-usage.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
 /** "Delete" and "Delete and recreate" keep the desktop's website sign-ins: its Firefox profile moves into the workspace first. */
-async function keepSignInsBeforeRemove(target: LocalVmTarget): Promise<void> {
-  const before = await containerComputerStatus(undefined, undefined, target);
-  await keepFirefoxProfileBeforeRemove(target, before, () => containerComputerAction("stop", undefined, undefined, target));
+async function keepSignInsBeforeRemove(
+  target: LocalVmTarget,
+  persistentAddons: ReadonlyArray<PersistentLocalVmAddon>,
+): Promise<void> {
+  const before = await containerComputerStatus(undefined, undefined, target, { persistentAddons });
+  await keepFirefoxProfileBeforeRemove(target, before, () => containerComputerAction("stop", undefined, undefined, target, persistentAddons));
 }
 
 export interface ComputerRouteDeps {
@@ -311,7 +315,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
       if (action === "pull") localVmImageBusy.set(true);
       else localVmLifecycleBusy.add(SHARED_LOCAL_VM_TARGET.key);
       try {
-        if (action === "remove") await keepSignInsBeforeRemove(SHARED_LOCAL_VM_TARGET);
+        if (action === "remove") await keepSignInsBeforeRemove(SHARED_LOCAL_VM_TARGET, localVmPersistentAddons(cfg));
         const status = await containerComputerAction(action, undefined, undefined, SHARED_LOCAL_VM_TARGET, localVmPersistentAddons(cfg));
         if (action === "run" || action === "start") {
           localVmSeen.add(SHARED_LOCAL_VM_TARGET.key);
@@ -386,7 +390,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
             }
           }
         }
-        if (action === "remove") await keepSignInsBeforeRemove(target);
+        if (action === "remove") await keepSignInsBeforeRemove(target, localVmPersistentAddons(cfg));
         const status = await containerComputerAction(action, undefined, undefined, target, localVmPersistentAddons(cfg));
         if (action === "run" || action === "start") {
           localVmSeen.add(target.key);
